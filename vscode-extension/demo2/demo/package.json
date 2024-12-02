@@ -11,15 +11,24 @@
   ],
   "activationEvents": [],
   "extensionDependencies": [	
-    "github.copilot",	
-		"github.copilot-chat"
+  		"github.copilot-chat"
 	],
   "main": "./dist/extension.js",
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "demo.helloWorld",
+        "fullName": "helloWorld",
+        "name": "helloWorld",
+        "description": "Ask how to run code in VS Code",
+        "isSticky": true
+      }
+    ],
     "commands": [
       {
        "command": "demo.helloWorld",
         "title": "Hello World"
+  
       }
     ]
   },
