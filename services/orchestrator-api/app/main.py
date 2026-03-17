@@ -36,6 +36,8 @@ class RunRequest(BaseModel):
     dest_subdir: str = Field(default="runs")
     role: str = Field(default="custom")
     selected_artifacts: list[str] = Field(default_factory=list)
+    llm_provider: str = Field(default="azure")
+    llm_model: str = Field(default="")
 
 @app.get("/health")
 def health():
@@ -56,6 +58,8 @@ def run_and_push(req: RunRequest, request: Request):
         req.tech_stack,
         req.max_loops,
         selected_artifacts=req.selected_artifacts,
+        llm_provider=req.llm_provider,
+        llm_model=req.llm_model or None,
     )
 
     runs_dir = Path("runs")

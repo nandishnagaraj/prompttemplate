@@ -81,9 +81,11 @@ def run(
     tech_stack: str = "",
     max_loops: int = 2,
     selected_artifacts: Iterable[str] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ) -> dict:
     run_dir = make_run_dir()
-    llm = build_llm()
+    llm = build_llm(provider=llm_provider, model_name=llm_model)
     prompts = PromptLibrary(str(Path(__file__).resolve().parent.parent / "prompt-library"))
     selected = _normalize_selected_artifacts(selected_artifacts)
     required_nodes = _expand_required_nodes(selected)

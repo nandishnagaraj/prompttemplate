@@ -23,6 +23,8 @@ def run_langgraph(
     tech_stack: str,
     max_loops: int = 2,
     selected_artifacts: list[str] | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ) -> dict:
     try:
         return run_pipeline(
@@ -30,6 +32,10 @@ def run_langgraph(
             tech_stack=tech_stack,
             max_loops=max_loops,
             selected_artifacts=selected_artifacts,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
         )
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid LLM configuration: {e}")
     except Exception as e:
         raise HTTPException(500, f"Pipeline failed: {e}")

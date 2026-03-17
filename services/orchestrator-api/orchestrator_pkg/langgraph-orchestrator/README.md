@@ -32,6 +32,12 @@ export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com/"
 export AZURE_OPENAI_DEPLOYMENT="<deployment_name>"
 ```
 
+**Option C — Gemini**
+```bash
+export GEMINI_API_KEY="..."
+export GEMINI_MODEL="gemini-1.5-flash"
+```
+
 If no keys are set, the orchestrator falls back to a deterministic **MockLLM** (useful for wiring/testing).
 
 ### 3) Run

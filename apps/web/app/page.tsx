@@ -99,6 +99,8 @@ export default function HomePage() {
   const [techStack, setTechStack] = useState('React, Node.js, PostgreSQL');
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('main');
+  const [llmProvider, setLlmProvider] = useState<'azure' | 'gemini'>('azure');
+  const [llmModel, setLlmModel] = useState('');
   const [role, setRole] = useState<RoleId>('product_owner');
   const [selectedArtifacts, setSelectedArtifacts] = useState<ArtifactId[]>(ROLE_PRESETS.product_owner);
   const [result, setResult] = useState<any>(null);
@@ -162,6 +164,8 @@ export default function HomePage() {
           tech_stack: techStack,
           repo_https_url: repo,
           branch,
+          llm_provider: llmProvider,
+          llm_model: llmModel,
           max_loops: 2,
           dest_subdir: 'runs',
           role,
@@ -220,6 +224,30 @@ export default function HomePage() {
           <label style={{ display: 'block', fontWeight: 600, marginTop: 8 }}>Branch</label>
           <input value={branch} onChange={(e) => setBranch(e.target.value)} style={{ width: '100%' }} />
 
+          <label style={{ display: 'block', fontWeight: 600, marginTop: 8 }}>LLM Provider</label>
+          <select
+            value={llmProvider}
+            onChange={(e) => {
+              const next = e.target.value as 'azure' | 'gemini';
+              setLlmProvider(next);
+              if (!llmModel.trim()) {
+                setLlmModel(next === 'azure' ? '' : 'gemini-1.5-flash');
+              }
+            }}
+            style={{ width: '100%' }}
+          >
+            <option value="azure">Azure OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+
+          <label style={{ display: 'block', fontWeight: 600, marginTop: 8 }}>Model (optional)</label>
+          <input
+            value={llmModel}
+            onChange={(e) => setLlmModel(e.target.value)}
+            placeholder={llmProvider === 'gemini' ? 'gemini-1.5-flash' : 'Uses AZURE_OPENAI_DEPLOYMENT'}
+            style={{ width: '100%' }}
+          />
+
           <label style={{ display: 'block', fontWeight: 600, marginTop: 8 }}>Role Preset</label>
           <select
             value={role}
@@ -253,6 +281,9 @@ export default function HomePage() {
           <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 10, background: '#fafafa' }}>
             <p style={{ margin: '0 0 6px 0' }}>
               <b>Selected artifacts:</b> {selectedArtifacts.length ? selectedArtifacts.join(', ') : 'None'}
+            </p>
+            <p style={{ margin: '0 0 6px 0' }}>
+              <b>LLM:</b> {llmProvider}{llmModel.trim() ? ` (${llmModel.trim()})` : ''}
             </p>
             <p style={{ margin: 0 }}>
               <b>Required nodes:</b> {requiredNodes.map((n) => NODE_LABELS[n]).join(' -> ')}

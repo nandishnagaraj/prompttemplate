@@ -25,7 +25,9 @@
 - LangGraph `>=0.2.0`
 - LangChain `>=0.1.0` (API layer) and `>=0.2.0` (bundled orchestrator)
 - LangChain OpenAI integration (`langchain-openai >=0.1.0`)
+- LangChain Gemini integration (`langchain-google-genai >=2.0.0`)
 - Azure OpenAI client path via `AzureChatOpenAI`
+- Gemini client path via `ChatGoogleGenerativeAI`
 - OpenAI-compatible client path via `ChatOpenAI`
 
 ### Git And Auth
@@ -67,6 +69,10 @@ AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=https://<resource>.cognitiveservices.azure.com/
 AZURE_OPENAI_DEPLOYMENT=<deployment_name>
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
+
+# Gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-1.5-flash
 ```
 
 ## Run
@@ -80,6 +86,12 @@ AZURE_OPENAI_API_VERSION=2024-12-01-preview
 docker compose up --build
 ```
 3. Open: http://localhost:3003
+
+## UI Provider Selection
+- In the web UI, set **LLM Provider** to `Azure OpenAI` or `Gemini`.
+- For `Azure OpenAI`, the backend uses `AZURE_OPENAI_*` values from API env.
+- For `Gemini`, the backend uses `GEMINI_API_KEY` and optional `GEMINI_MODEL`.
+- You can optionally override model name using the UI **Model (optional)** field.
 
 ### Option B: Local Development (recommended when compose web install is flaky)
 1. Start API:
