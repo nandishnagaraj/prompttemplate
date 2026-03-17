@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .auth import router as auth_router, get_github_token
+from .auth import router as auth_router, get_provider_token, get_session_provider
 from .settings import settings
 from .runner_service import run_langgraph
-from .github_client import push_run_folder
+from .github_client import push_run_folder as push_run_folder_github
+from .bitbucket_client import push_run_folder as push_run_folder_bitbucket
 
 app = FastAPI(title="Prompt UI Orchestrator API", version="0.1.0")
 
@@ -36,6 +37,7 @@ class RunRequest(BaseModel):
     dest_subdir: str = Field(default="runs")
     role: str = Field(default="custom")
     selected_artifacts: list[str] = Field(default_factory=list)
+    git_provider: str = Field(default="github")
     llm_provider: str = Field(default="azure")
     llm_model: str = Field(default="")
 
@@ -44,14 +46,24 @@ def health():
     return {"ok": True}
 
 @app.get("/me")
-def me(request: Request):
-    return {"authenticated": bool(get_github_token(request))}
+def me(request: Request, provider: str = "github"):
+    selected_provider = provider.strip().lower()
+    if selected_provider not in {"github", "bitbucket"}:
+        raise HTTPException(400, "Unsupported provider. Use 'github' or 'bitbucket'.")
+    return {
+        "authenticated": bool(get_provider_token(request, selected_provider)),
+        "provider": get_session_provider(request),
+    }
 
 @app.post("/runs")
 def run_and_push(req: RunRequest, request: Request):
-    token = get_github_token(request)
+    selected_provider = req.git_provider.strip().lower()
+    if selected_provider not in {"github", "bitbucket"}:
+        raise HTTPException(400, "Unsupported git provider. Use 'github' or 'bitbucket'.")
+
+    token = get_provider_token(request, selected_provider)
     if not token:
-        raise HTTPException(401, "Not authenticated. Use /auth/login first.")
+        raise HTTPException(401, f"Not authenticated for {selected_provider}. Use /auth/login?provider={selected_provider} first.")
 
     _ = run_langgraph(
         req.idea,
@@ -70,12 +82,28 @@ def run_and_push(req: RunRequest, request: Request):
     if latest is None:
         raise HTTPException(500, "No run folder created")
 
-    sha = push_run_folder(token=token, repo_https_url=req.repo_https_url, branch=req.branch, run_folder=str(latest), dest_subdir=req.dest_subdir)
+    if selected_provider == "github":
+        sha = push_run_folder_github(
+            token=token,
+            repo_https_url=req.repo_https_url,
+            branch=req.branch,
+            run_folder=str(latest),
+            dest_subdir=req.dest_subdir,
+        )
+    else:
+        sha = push_run_folder_bitbucket(
+            token=token,
+            repo_https_url=req.repo_https_url,
+            branch=req.branch,
+            run_folder=str(latest),
+            dest_subdir=req.dest_subdir,
+        )
 
     return {
         "run_folder": latest.name,
         "commit": sha,
         "repo": req.repo_https_url,
         "branch": req.branch,
+        "git_provider": selected_provider,
         "files": [p.name for p in latest.iterdir() if p.is_file()],
     }

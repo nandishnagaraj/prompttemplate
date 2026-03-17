@@ -18,6 +18,7 @@ type ArtifactId =
   | 'coverage_gaps';
 
 type RoleId = 'product_owner' | 'architect' | 'developer' | 'qa' | 'full' | 'custom';
+type GitProvider = 'github' | 'bitbucket';
 
 const ARTIFACT_OPTIONS: Array<{ id: ArtifactId; label: string }> = [
   { id: 'prd', label: 'PRD' },
@@ -94,6 +95,7 @@ function getRequiredNodes(selectedArtifacts: ArtifactId[]): Array<'pm' | 'arch' 
 }
 
 export default function HomePage() {
+  const [gitProvider, setGitProvider] = useState<GitProvider>('github');
   const [authenticated, setAuthenticated] = useState(false);
   const [idea, setIdea] = useState('Build a leave management system');
   const [techStack, setTechStack] = useState('React, Node.js, PostgreSQL');
@@ -108,13 +110,33 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const requiredNodes = getRequiredNodes(selectedArtifacts);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get('git_provider');
+    const fromStorage = window.localStorage.getItem('git_provider');
+
+    const next = (fromQuery || fromStorage || 'github').toLowerCase();
+    if (next === 'github' || next === 'bitbucket') {
+      setGitProvider(next as GitProvider);
+      window.localStorage.setItem('git_provider', next);
+    }
+
+    if (fromQuery) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('git_provider', gitProvider);
+  }, [gitProvider]);
+
   async function refreshMe() {
-    const res = await fetch(`${API}/me`, { credentials: 'include' });
+    const res = await fetch(`${API}/me?provider=${gitProvider}`, { credentials: 'include' });
     const data = await res.json();
     setAuthenticated(Boolean(data.authenticated));
   }
 
-  useEffect(() => { refreshMe().catch(() => {}); }, []);
+  useEffect(() => { refreshMe().catch(() => {}); }, [gitProvider]);
 
   function setRolePreset(nextRole: RoleId) {
     setRole(nextRole);
@@ -134,7 +156,7 @@ export default function HomePage() {
 
   async function run() {
     if (!authenticated) {
-      setError('Please sign in with GitHub before running the pipeline.');
+      setError(`Please sign in with ${gitProvider === 'github' ? 'GitHub' : 'Bitbucket'} before running the pipeline.`);
       return;
     }
 
@@ -144,7 +166,7 @@ export default function HomePage() {
     }
 
     if (!repo.trim()) {
-      setError('Enter a target GitHub repository URL before running.');
+      setError('Enter a target repository URL before running.');
       return;
     }
 
@@ -164,6 +186,7 @@ export default function HomePage() {
           tech_stack: techStack,
           repo_https_url: repo,
           branch,
+          git_provider: gitProvider,
           llm_provider: llmProvider,
           llm_model: llmModel,
           max_loops: 2,
@@ -185,15 +208,27 @@ export default function HomePage() {
 
   return (
     <main style={{ maxWidth: 980, margin: '0 auto', padding: 24 }}>
-      <h1 style={{ marginBottom: 6 }}>Prompt Template UI → LangGraph → Push to GitHub</h1>
+      <h1 style={{ marginBottom: 6 }}>Prompt Template UI → LangGraph → Push to Git Provider</h1>
       <p style={{ marginTop: 0, color: '#444' }}>
-        Login with GitHub, generate SDLC markdown using LangGraph, and push a dated folder into the selected repo under <code>runs/</code>.
+        Login with GitHub or Bitbucket, generate SDLC markdown using LangGraph, and push a dated folder into the selected repo under <code>runs/</code>.
       </p>
+
+      <div style={{ marginBottom: 16, maxWidth: 360 }}>
+        <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Git Provider</label>
+        <select
+          value={gitProvider}
+          onChange={(e) => setGitProvider(e.target.value as GitProvider)}
+          style={{ width: '100%' }}
+        >
+          <option value="github">GitHub</option>
+          <option value="bitbucket">Bitbucket</option>
+        </select>
+      </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
         {!authenticated ? (
-          <a href={`${API}/auth/login`} style={{ padding: '10px 14px', border: '1px solid #333', borderRadius: 8, textDecoration: 'none' }}>
-            Sign in with GitHub
+          <a href={`${API}/auth/login?provider=${gitProvider}`} style={{ padding: '10px 14px', border: '1px solid #333', borderRadius: 8, textDecoration: 'none' }}>
+            Sign in with {gitProvider === 'github' ? 'GitHub' : 'Bitbucket'}
           </a>
         ) : (
           <button
@@ -285,6 +320,9 @@ export default function HomePage() {
             <p style={{ margin: '0 0 6px 0' }}>
               <b>LLM:</b> {llmProvider}{llmModel.trim() ? ` (${llmModel.trim()})` : ''}
             </p>
+            <p style={{ margin: '0 0 6px 0' }}>
+              <b>Git provider:</b> {gitProvider}
+            </p>
             <p style={{ margin: 0 }}>
               <b>Required nodes:</b> {requiredNodes.map((n) => NODE_LABELS[n]).join(' -> ')}
             </p>
@@ -304,6 +342,7 @@ export default function HomePage() {
             <div>
               <p><b>Repo:</b> {result.repo}</p>
               <p><b>Branch:</b> {result.branch}</p>
+              <p><b>Git provider:</b> {result.git_provider || gitProvider}</p>
               <p><b>Run folder:</b> <code>runs/{result.run_folder}</code></p>
               <p><b>Commit:</b> <code>{result.commit}</code></p>
               <p><b>Selected role:</b> {role}</p>

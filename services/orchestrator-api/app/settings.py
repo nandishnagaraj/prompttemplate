@@ -8,6 +8,9 @@ class Settings(BaseModel):
     github_client_secret: str = os.getenv("GITHUB_CLIENT_SECRET", "")
     github_redirect_uri: str = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:8000/auth/callback").rstrip("/")
     github_token: str = os.getenv("GITHUB_TOKEN", "")
+    bitbucket_client_id: str = os.getenv("BITBUCKET_CLIENT_ID", "")
+    bitbucket_client_secret: str = os.getenv("BITBUCKET_CLIENT_SECRET", "")
+    bitbucket_redirect_uri: str = os.getenv("BITBUCKET_REDIRECT_URI", "http://localhost:8000/auth/bitbucket/callback").rstrip("/")
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3003").rstrip("/")
     allow_pat_fallback: bool = os.getenv("ALLOW_PAT_FALLBACK", "true").lower() == "true"
     session_secret: str = os.getenv("SESSION_SECRET", "change-me")

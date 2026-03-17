@@ -1,7 +1,7 @@
-# Prompt Template UI + LangGraph + GitHub Push (Local Demo)
+# Prompt Template UI + LangGraph + Git Provider Push (Local Demo)
 
 ## What It Does
-- GitHub OAuth login (supports public GitHub and GitHub Enterprise via `GITHUB_BASE_URL`)
+- Git provider OAuth login (GitHub and Bitbucket)
 - Runs the bundled LangGraph orchestrator to generate SDLC artifacts
 - Writes outputs to `runs/<timestamp>/`
 - Pushes `runs/<timestamp>/` into the selected repository under `runs/`
@@ -32,7 +32,7 @@
 
 ### Git And Auth
 - GitPython `>=3.1.43`
-- GitHub OAuth (`/auth/login`, `/auth/callback`)
+- Provider OAuth (`/auth/login?provider=github|bitbucket`)
 - Cookie-based in-memory session handling in API
 
 ### Container And Runtime
@@ -56,6 +56,11 @@ GITHUB_BASE_URL=https://github.com
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 GITHUB_REDIRECT_URI=http://localhost:8000/auth/callback
+
+# Bitbucket OAuth
+BITBUCKET_CLIENT_ID=...
+BITBUCKET_CLIENT_SECRET=...
+BITBUCKET_REDIRECT_URI=http://localhost:8000/auth/bitbucket/callback
 
 # Optional PAT fallback (for non-OAuth demo use)
 GITHUB_TOKEN=...
@@ -107,9 +112,9 @@ npm --prefix apps/web run dev -- -p 3003
 3. Open: http://localhost:3003
 
 ## OAuth Notes
-- The GitHub OAuth app callback URL must exactly match `GITHUB_REDIRECT_URI`.
-- For this setup, use: `http://localhost:8000/auth/callback`.
-- If callback mismatches, GitHub will reject login before returning to the app.
+- GitHub callback URL must exactly match `GITHUB_REDIRECT_URI` (`http://localhost:8000/auth/callback`).
+- Bitbucket callback URL must exactly match `BITBUCKET_REDIRECT_URI` (`http://localhost:8000/auth/bitbucket/callback`).
+- Use UI provider selector first, then sign in for that provider.
 
 ## Adding New Nodes
 
