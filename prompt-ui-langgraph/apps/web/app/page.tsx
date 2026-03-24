@@ -75,6 +75,10 @@ const NODE_LABELS: Record<'pm' | 'arch' | 'dev' | 'qa', string> = {
 
 const NODE_ORDER: Array<'pm' | 'arch' | 'dev' | 'qa'> = ['pm', 'arch', 'dev', 'qa'];
 
+function getSessionId(): string {
+  return window.localStorage.getItem('session_id') || '';
+}
+
 function getRequiredNodes(selectedArtifacts: ArtifactId[]): Array<'pm' | 'arch' | 'dev' | 'qa'> {
   const required = new Set<'pm' | 'arch' | 'dev' | 'qa'>(selectedArtifacts.map((a) => ARTIFACT_NODE[a]));
 
@@ -113,6 +117,7 @@ export default function HomePage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get('git_provider');
+    const sessionId = params.get('session_id');
     const fromStorage = window.localStorage.getItem('git_provider');
 
     const next = (fromQuery || fromStorage || 'github').toLowerCase();
@@ -121,7 +126,11 @@ export default function HomePage() {
       window.localStorage.setItem('git_provider', next);
     }
 
-    if (fromQuery) {
+    if (sessionId) {
+      window.localStorage.setItem('session_id', sessionId);
+    }
+
+    if (fromQuery || sessionId) {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
@@ -131,7 +140,13 @@ export default function HomePage() {
   }, [gitProvider]);
 
   async function refreshMe() {
-    const res = await fetch(`${API}/me?provider=${gitProvider}`, { credentials: 'include' });
+    const sid = getSessionId();
+    const url = sid
+      ? `${API}/me?provider=${gitProvider}&session_id=${encodeURIComponent(sid)}`
+      : `${API}/me?provider=${gitProvider}`;
+    const res = await fetch(url, {
+      credentials: 'include',
+    });
     const data = await res.json();
     setAuthenticated(Boolean(data.authenticated));
   }
@@ -177,7 +192,11 @@ export default function HomePage() {
 
     setLoading(true); setError(null); setResult(null);
     try {
-      const res = await fetch(`${API}/runs`, {
+      const sid = getSessionId();
+      const url = sid
+        ? `${API}/runs?session_id=${encodeURIComponent(sid)}`
+        : `${API}/runs`;
+      const res = await fetch(url, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -232,7 +251,18 @@ export default function HomePage() {
           </a>
         ) : (
           <button
-            onClick={async () => { await fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'include' }); await refreshMe(); }}
+            onClick={async () => {
+              const sid = getSessionId();
+              const url = sid
+                ? `${API}/auth/logout?session_id=${encodeURIComponent(sid)}`
+                : `${API}/auth/logout`;
+              await fetch(url, {
+                method: 'POST',
+                credentials: 'include',
+              });
+              window.localStorage.removeItem('session_id');
+              await refreshMe();
+            }}
             style={{ padding: '10px 14px', border: '1px solid #333', borderRadius: 8, background: 'white' }}
           >
             Logout

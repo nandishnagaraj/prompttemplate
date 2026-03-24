@@ -1,0 +1,23 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node and Next.js artifacts
+node_modules/
+.next/
+out/
+coverage/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/

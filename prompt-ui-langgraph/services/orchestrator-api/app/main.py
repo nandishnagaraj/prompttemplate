@@ -16,7 +16,11 @@ allowed_origins = [
     "http://localhost:3000",
     "http://localhost:3003",
     "http://localhost:3004",
+    "http://localhost:3005",
+    settings.frontend_url,
 ]
+
+allowed_origins = list(dict.fromkeys(allowed_origins))
 
 app.add_middleware(
     CORSMiddleware,

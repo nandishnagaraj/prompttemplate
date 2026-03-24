@@ -1,6 +1,11 @@
 from __future__ import annotations
+import base64
+import hashlib
+import hmac
+import json
 import secrets
-from urllib.parse import quote_plus
+import time
+from urllib.parse import quote_plus, urlencode
 import requests
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -9,6 +14,126 @@ from .settings import settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 _SESSIONS: dict[str, dict] = {}
 _OAUTH_STATES: dict[str, dict] = {}
+_STATE_MAX_AGE_SECONDS = 600
+
+
+def _cookie_samesite_value() -> str:
+    value = (settings.session_cookie_samesite or "lax").strip().lower()
+    if value not in {"lax", "strict", "none"}:
+        return "lax"
+    return value
+
+
+def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
+    response.set_cookie(
+        "session_id",
+        session_id,
+        httponly=True,
+        samesite=_cookie_samesite_value(),
+        secure=bool(settings.session_cookie_secure),
+    )
+
+
+def _set_oauth_state_cookie(response: RedirectResponse, provider: str, state: str) -> None:
+    response.set_cookie(
+        "oauth_state",
+        state,
+        httponly=True,
+        samesite=_cookie_samesite_value(),
+        secure=bool(settings.session_cookie_secure),
+        max_age=600,
+    )
+    response.set_cookie(
+        "oauth_provider",
+        provider,
+        httponly=True,
+        samesite=_cookie_samesite_value(),
+        secure=bool(settings.session_cookie_secure),
+        max_age=600,
+    )
+
+
+def _clear_oauth_state_cookie(response: RedirectResponse) -> None:
+    response.delete_cookie("oauth_state")
+    response.delete_cookie("oauth_provider")
+
+
+def _get_session_id(request: Request) -> str | None:
+    # Fallback order: cookie -> custom header -> query parameter.
+    sid = request.cookies.get("session_id")
+    if sid:
+        return sid
+    sid = request.headers.get("x-session-id")
+    if sid:
+        return sid
+    sid = request.query_params.get("session_id")
+    if sid:
+        return sid
+    return None
+
+
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _sign_state_payload(payload_b64: str) -> str:
+    secret = settings.session_secret.encode()
+    return hmac.new(secret, payload_b64.encode(), hashlib.sha256).hexdigest()
+
+
+def _build_oauth_state(provider: str) -> str:
+    payload = {
+        "provider": provider,
+        "nonce": secrets.token_urlsafe(16),
+        "ts": int(time.time()),
+    }
+    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    signature = _sign_state_payload(payload_b64)
+    return f"{payload_b64}.{signature}"
+
+
+def _validate_signed_oauth_state(state: str, expected_provider: str) -> bool:
+    try:
+        payload_b64, signature = state.split(".", 1)
+    except ValueError:
+        return False
+
+    expected_signature = _sign_state_payload(payload_b64)
+    if not hmac.compare_digest(signature, expected_signature):
+        return False
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode())
+    except Exception:
+        return False
+
+    if payload.get("provider") != expected_provider:
+        return False
+
+    issued_at = int(payload.get("ts", 0))
+    if not issued_at or time.time() - issued_at > _STATE_MAX_AGE_SECONDS:
+        return False
+
+    return True
+
+
+def _is_valid_oauth_state(request: Request, state: str, expected_provider: str) -> bool:
+    if _validate_signed_oauth_state(state, expected_provider):
+        return True
+
+    data = _OAUTH_STATES.pop(state, None)
+    if data and data.get("provider") == expected_provider:
+        return True
+
+    # Fallback: validate against cookies in case process restarted between login and callback.
+    cookie_state = request.cookies.get("oauth_state", "")
+    cookie_provider = request.cookies.get("oauth_provider", "")
+    return cookie_state == state and cookie_provider == expected_provider
 
 
 def _github_authorize_url(state: str) -> str:
@@ -33,26 +158,29 @@ def _bitbucket_authorize_url(state: str) -> str:
 @router.get("/login")
 def login(provider: str = "github"):
     provider = provider.strip().lower()
-    state = secrets.token_urlsafe(24)
+    state = _build_oauth_state(provider)
     _OAUTH_STATES[state] = {"provider": provider}
 
     if provider == "github":
         if not settings.github_client_id:
             raise HTTPException(500, "GITHUB_CLIENT_ID not set")
-        return RedirectResponse(_github_authorize_url(state))
+        response = RedirectResponse(_github_authorize_url(state))
+        _set_oauth_state_cookie(response, provider, state)
+        return response
 
     if provider == "bitbucket":
         if not settings.bitbucket_client_id:
             raise HTTPException(500, "BITBUCKET_CLIENT_ID not set")
-        return RedirectResponse(_bitbucket_authorize_url(state))
+        response = RedirectResponse(_bitbucket_authorize_url(state))
+        _set_oauth_state_cookie(response, provider, state)
+        return response
 
     raise HTTPException(400, "Unsupported provider. Use 'github' or 'bitbucket'.")
 
 @router.get("/callback")
 def callback(code: str, state: str, request: Request):
-    data = _OAUTH_STATES.pop(state, None)
-    if not data or data.get("provider") != "github":
-        raise HTTPException(400, "Invalid state")
+    if not _is_valid_oauth_state(request, state, "github"):
+        raise HTTPException(400, "Invalid or expired OAuth state. Start login again.")
     if not settings.github_client_secret:
         raise HTTPException(500, "GITHUB_CLIENT_SECRET not set")
 
@@ -83,16 +211,17 @@ def callback(code: str, state: str, request: Request):
 
     session_id = secrets.token_urlsafe(32)
     _SESSIONS[session_id] = {"provider": "github", "token": tok}
-    r = RedirectResponse(url=f"{settings.frontend_url}/?git_provider=github")
-    r.set_cookie("session_id", session_id, httponly=True, samesite="lax")
+    params = urlencode({"git_provider": "github", "session_id": session_id})
+    r = RedirectResponse(url=f"{settings.frontend_url}/?{params}")
+    _set_session_cookie(r, session_id)
+    _clear_oauth_state_cookie(r)
     return r
 
 
 @router.get("/bitbucket/callback")
-def bitbucket_callback(code: str, state: str):
-    data = _OAUTH_STATES.pop(state, None)
-    if not data or data.get("provider") != "bitbucket":
-        raise HTTPException(400, "Invalid state")
+def bitbucket_callback(code: str, state: str, request: Request):
+    if not _is_valid_oauth_state(request, state, "bitbucket"):
+        raise HTTPException(400, "Invalid or expired OAuth state. Start login again.")
     if not settings.bitbucket_client_secret:
         raise HTTPException(500, "BITBUCKET_CLIENT_SECRET not set")
 
@@ -130,13 +259,15 @@ def bitbucket_callback(code: str, state: str):
 
     session_id = secrets.token_urlsafe(32)
     _SESSIONS[session_id] = {"provider": "bitbucket", "token": tok, "refresh_token": refresh_tok}
-    r = RedirectResponse(url=f"{settings.frontend_url}/?git_provider=bitbucket")
-    r.set_cookie("session_id", session_id, httponly=True, samesite="lax")
+    params = urlencode({"git_provider": "bitbucket", "session_id": session_id})
+    r = RedirectResponse(url=f"{settings.frontend_url}/?{params}")
+    _set_session_cookie(r, session_id)
+    _clear_oauth_state_cookie(r)
     return r
 
 @router.post("/logout")
 def logout(request: Request):
-    sid = request.cookies.get("session_id")
+    sid = _get_session_id(request)
     if sid:
         _SESSIONS.pop(sid, None)
     r = JSONResponse({"ok": True})
@@ -145,7 +276,7 @@ def logout(request: Request):
 
 
 def get_provider_token(request: Request, provider: str) -> str | None:
-    sid = request.cookies.get("session_id")
+    sid = _get_session_id(request)
     if sid and sid in _SESSIONS:
         data = _SESSIONS[sid]
         if data.get("provider") == provider:
@@ -154,7 +285,7 @@ def get_provider_token(request: Request, provider: str) -> str | None:
 
 
 def get_provider_refresh_token(request: Request, provider: str) -> str | None:
-    sid = request.cookies.get("session_id")
+    sid = _get_session_id(request)
     if sid and sid in _SESSIONS:
         data = _SESSIONS[sid]
         if data.get("provider") == provider:
@@ -164,13 +295,13 @@ def get_provider_refresh_token(request: Request, provider: str) -> str | None:
 
 def update_provider_token(request: Request, provider: str, new_access_token: str) -> None:
     """Replace the stored access token after a successful refresh."""
-    sid = request.cookies.get("session_id")
+    sid = _get_session_id(request)
     if sid and sid in _SESSIONS and _SESSIONS[sid].get("provider") == provider:
         _SESSIONS[sid]["token"] = new_access_token
 
 
 def get_session_provider(request: Request) -> str | None:
-    sid = request.cookies.get("session_id")
+    sid = _get_session_id(request)
     if sid and sid in _SESSIONS:
         return _SESSIONS[sid].get("provider")
     return None
