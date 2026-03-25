@@ -286,7 +286,51 @@ Comprehensive TypeScript interfaces for type safety.
    MIN_INLINE_CONFIDENCE=0.8
    ```
 
-### Step 5: Local Development Setup
+### Step 5: Ngrok Setup (for Webhook Testing)
+
+1. **Install ngrok** (if not already installed):
+   ```bash
+   # macOS with Homebrew
+   brew install ngrok
+   
+   # Or download from https://ngrok.com/download
+   ```
+
+2. **Start ngrok tunnel**:
+   ```bash
+   # Basic setup
+   ngrok http 3001
+   
+   # With custom domain (paid plan)
+   ngrok http 3001 --domain=your-custom-domain.ngrok.io
+   
+   # With authentication
+   ngrok http 3001 --auth="username:password"
+   ```
+
+3. **Get your webhook URL**:
+   - Look for the `Forwarding` line in ngrok output
+   - Example: `https://abcd-1234-5678.ngrok-free.dev -> http://localhost:3001`
+   - Your webhook URL: `https://abcd-1234-5678.ngrok-free.dev/webhook/bitbucket`
+
+4. **Check ngrok status**:
+   ```bash
+   # View current tunnels
+   curl http://127.0.0.1:4040/api/tunnels
+   
+   # Get just the URL
+   curl http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+   ```
+
+5. **Stop ngrok**:
+   ```bash
+   # Stop all tunnels
+   ngrok kill
+   
+   # Or press Ctrl+C in the ngrok terminal
+   ```
+
+### Step 6: Local Development Setup
 
 1. **Start the development server**:
    ```bash
@@ -306,7 +350,7 @@ Comprehensive TypeScript interfaces for type safety.
    ```
    Copy the HTTPS URL for webhook configuration
 
-### Step 6: Bitbucket Webhook Configuration
+### Step 7: Bitbucket Webhook Configuration
 
 1. **Navigate to Webhook Settings**:
    ```
@@ -315,7 +359,8 @@ Comprehensive TypeScript interfaces for type safety.
 
 2. **Create Webhook**:
    - Title: "AI Review Bot"
-   - URL: `https://your-ngrok-url.ngrok.io/webhook/bitbucket`
+   - URL: `https://your-ngrok-url.ngrok-free.dev/webhook/bitbucket`
+     (Replace with your actual ngrok URL from Step 5)
    - Triggers:
      - ✅ Pull request created
      - ✅ Pull request updated
@@ -326,7 +371,7 @@ Comprehensive TypeScript interfaces for type safety.
    - Check webhook delivery logs
    - Verify AI comments appear
 
-### Step 7: Production Deployment
+### Step 8: Production Deployment
 
 **For production use, consider:**
 
