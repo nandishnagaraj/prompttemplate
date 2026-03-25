@@ -200,5 +200,14 @@ This improves consistency and traceability between:
 ## Important Security Note
 Do not commit secrets. Rotate any credentials that were exposed in logs, commits, or chat.
 
+## Pre-Push Review Demo
+This repo uses a pre-push hook to run automated review checks before push.
+
+1. Make any code or docs change.
+2. Commit locally.
+3. Run `git push --dry-run <remote> <branch>`.
+
+Before the dry-run push completes, the hook executes `.githooks/pre-push`, which calls `scripts/run_pre_push_review.sh` and blocks push on failures.
+
 ## Author
 Developed by nandish: https://github.com/nandishnagaraj/
