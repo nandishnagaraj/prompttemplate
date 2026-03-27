@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -52,8 +53,68 @@ class _LangChainTextAdapter:
         return str(result)
 
 
-def build_llm(provider: Optional[str] = None, model_name: Optional[str] = None) -> object:
-    """Return an object with .invoke(str)->str."""
+class TokenTrackingWrapper:
+    """Wraps an LLM to track token usage and costs."""
+    
+    # Token pricing per 1M tokens (2024 rates)
+    PRICING = {
+        "gpt-4-1-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4": {"input": 3.00, "output": 6.00},
+        "gemini-2.5-flash": {"input": 0.075, "output": 0.30},
+        "azure": {"input": 0.15, "output": 0.60},  # Azure pricing
+    }
+    
+    def __init__(self, llm: Any, model_name: str = "gpt-4-1-mini"):
+        self._llm = llm
+        self._model_name = model_name.lower()
+        self.token_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        }
+        self._call_count = 0
+    
+    def invoke(self, prompt: str) -> str:
+        result = self._llm.invoke(prompt)
+        self._call_count += 1
+        
+        # Estimate tokens (rough approximation: ~4 chars per token)
+        prompt_tokens = len(prompt) // 4
+        completion_tokens = len(result) // 4
+        
+        self.token_usage["prompt_tokens"] += prompt_tokens
+        self.token_usage["completion_tokens"] += completion_tokens
+        self.token_usage["total_tokens"] += prompt_tokens + completion_tokens
+        
+        # Calculate cost
+        pricing = self._get_pricing()
+        prompt_cost = (prompt_tokens / 1_000_000) * pricing["input"]
+        completion_cost = (completion_tokens / 1_000_000) * pricing["output"]
+        self.token_usage["estimated_cost_usd"] += prompt_cost + completion_cost
+        
+        return result
+    
+    def _get_pricing(self) -> dict:
+        """Get pricing for the current model."""
+        for model_key, pricing in self.PRICING.items():
+            if model_key in self._model_name:
+                return pricing
+        return self.PRICING["gpt-4-1-mini"]  # Default
+    
+    def reset_metrics(self):
+        """Reset token counters."""
+        self.token_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        }
+        self._call_count = 0
+
+
+def build_llm(provider: Optional[str] = None, model_name: Optional[str] = None) -> TokenTrackingWrapper:
+    """Return a TokenTrackingWrapper around an LLM with .invoke(str)->str."""
     selected_provider = (provider or os.getenv("LLM_PROVIDER", "auto")).strip().lower()
 
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -63,12 +124,16 @@ def build_llm(provider: Optional[str] = None, model_name: Optional[str] = None) 
     azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
     gemini_key = os.getenv("GEMINI_API_KEY")
 
+    chosen_model = model_name
+    base_llm = None
+
     if selected_provider == "azure":
         if not (azure_key and azure_endpoint and azure_deployment):
             raise ValueError(
                 "Azure provider selected but required env vars are missing: "
                 "AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT"
             )
+        chosen_model = chosen_model or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
         model = AzureChatOpenAI(
             azure_endpoint=azure_endpoint,
             azure_deployment=azure_deployment,
@@ -77,53 +142,61 @@ def build_llm(provider: Optional[str] = None, model_name: Optional[str] = None) 
             temperature=0,
             max_tokens=4096,
         )
-        return _LangChainTextAdapter(model)
+        base_llm = _LangChainTextAdapter(model)
 
-    if selected_provider == "openai":
+    elif selected_provider == "openai":
         if not openai_key:
             raise ValueError("OpenAI provider selected but OPENAI_API_KEY is missing")
-        chosen_model = model_name or os.getenv("MODEL_NAME", "gpt-4.1-mini")
+        chosen_model = chosen_model or os.getenv("MODEL_NAME", "gpt-4-1-mini")
         model = ChatOpenAI(model=chosen_model, api_key=openai_key, temperature=0, max_tokens=4096)
-        return _LangChainTextAdapter(model)
+        base_llm = _LangChainTextAdapter(model)
 
-    if selected_provider == "gemini":
+    elif selected_provider == "gemini":
         if not gemini_key:
             raise ValueError("Gemini provider selected but GEMINI_API_KEY is missing")
-        chosen_model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        chosen_model = chosen_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         model = ChatGoogleGenerativeAI(
             model=chosen_model,
             google_api_key=gemini_key,
             temperature=0,
             max_output_tokens=8192,
         )
-        return _LangChainTextAdapter(model)
+        base_llm = _LangChainTextAdapter(model)
 
-    if selected_provider not in {"auto", ""}:
+    elif selected_provider not in {"auto", ""}:
         raise ValueError(f"Unsupported LLM provider: {selected_provider}")
 
-    if azure_key and azure_endpoint and azure_deployment:
-        model = AzureChatOpenAI(
-            azure_endpoint=azure_endpoint,
-            azure_deployment=azure_deployment,
-            openai_api_key=azure_key,
-            openai_api_version=azure_api_version,
-            temperature=0,
-        )
-        return _LangChainTextAdapter(model)
+    # Auto-fallback logic
+    if base_llm is None:
+        if azure_key and azure_endpoint and azure_deployment:
+            chosen_model = chosen_model or os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+            model = AzureChatOpenAI(
+                azure_endpoint=azure_endpoint,
+                azure_deployment=azure_deployment,
+                openai_api_key=azure_key,
+                openai_api_version=azure_api_version,
+                temperature=0,
+                max_tokens=4096,
+            )
+            base_llm = _LangChainTextAdapter(model)
 
-    if openai_key:
-        fallback_model = model_name or os.getenv("MODEL_NAME", "gpt-4.1-mini")
-        model = ChatOpenAI(model=fallback_model, api_key=openai_key, temperature=0, max_tokens=4096)
-        return _LangChainTextAdapter(model)
+        elif openai_key:
+            chosen_model = chosen_model or os.getenv("MODEL_NAME", "gpt-4-1-mini")
+            model = ChatOpenAI(model=chosen_model, api_key=openai_key, temperature=0, max_tokens=4096)
+            base_llm = _LangChainTextAdapter(model)
 
-    if gemini_key:
-        fallback_model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        model = ChatGoogleGenerativeAI(
-            model=fallback_model,
-            google_api_key=gemini_key,
-            temperature=0,
-            max_output_tokens=8192,
-        )
-        return _LangChainTextAdapter(model)
+        elif gemini_key:
+            chosen_model = chosen_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model = ChatGoogleGenerativeAI(
+                model=chosen_model,
+                google_api_key=gemini_key,
+                temperature=0,
+                max_output_tokens=8192,
+            )
+            base_llm = _LangChainTextAdapter(model)
 
-    return MockLLM()
+        else:
+            base_llm = MockLLM()
+
+    chosen_model = chosen_model or "gpt-4-1-mini"
+    return TokenTrackingWrapper(base_llm, model_name=chosen_model)

@@ -11,6 +11,22 @@ class Defect(TypedDict, total=False):
     suggestion: str
 
 
+class TokenMetrics(TypedDict, total=False):
+    """Token usage metrics per artifact or node."""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+
+
+class NodeMetrics(TypedDict, total=False):
+    """Execution metrics per node."""
+    tokens: TokenMetrics
+    error: Optional[str]
+    execution_time_ms: float
+    artifacts_generated: List[str]
+
+
 class OrchestratorState(TypedDict, total=False):
     # Inputs
     idea: str
@@ -39,8 +55,15 @@ class OrchestratorState(TypedDict, total=False):
     defect_list: List[Defect]
     coverage_map: str
 
-    # Control
+    # Control & Limits
     loop_count: int
     max_loops: int
+    max_tokens: int  # Safety limit per run
+    cost_limit_usd: float  # Safety limit on total cost
     last_error: Optional[str]
     run_dir: Optional[str]
+    
+    # Metrics & Observability
+    total_token_metrics: TokenMetrics
+    node_metrics: Dict[str, NodeMetrics]  # per-node execution stats
+    execution_log: List[str]  # structured execution trace

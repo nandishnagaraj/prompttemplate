@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Dict, Any, List, Optional, Set
 import re
+import json
 
 from .state import OrchestratorState, Defect
 from .io_utils import write_artifact
 from .prompts import PromptLibrary
+from .improvements import extract_defects_json, StructuredLogger, track_node_execution, parallel_invoke, update_token_metrics
 
 
 def _fill(template: str, mapping: Dict[str, str]) -> str:
@@ -178,31 +180,47 @@ def architect_node(
         write_artifact(run_dir, "05_architecture.md", architecture)
 
     api_contract = ""
-    if _persist("api_contract", selected_artifacts):
-        api_prompt = (prompts.openapi_contract()
-            .replace("[FEATURE DESCRIPTION]", state.get("idea", ""))
-            .replace("[PASTE RELEVANT SCHEMA]", "(derive from PRD)")
-            .replace("[WHO CALLS THIS API — frontend, mobile, third parties]", "(derive from PRD)"))
-        api_contract = llm.invoke(api_prompt)
-        api_contract = _enforce_sections(
-            llm=llm,
-            artifact_name="API Contract",
-            markdown=api_contract,
-            required_sections=["Endpoints", "Schemas", "Error Handling"],
-        )
-        write_artifact(run_dir, "06_openapi.md", api_contract)
-
     arch_risks = ""
-    if _persist("arch_risks", selected_artifacts):
-        risk_prompt = prompts.arch_risk_review().replace("[PASTE DESIGN DOCUMENT OR DIAGRAM]", architecture)
-        arch_risks = llm.invoke(risk_prompt)
-        arch_risks = _enforce_sections(
-            llm=llm,
-            artifact_name="Architecture Risk Review",
-            markdown=arch_risks,
-            required_sections=["Risk Register", "Mitigations", "Open Questions"],
-        )
-        write_artifact(run_dir, "07_arch_risk_review.md", arch_risks)
+    
+    # Parallelize api_contract and arch_risks generation for 50% speedup
+    if _persist("api_contract", selected_artifacts) or _persist("arch_risks", selected_artifacts):
+        prompts_to_run = []
+        
+        if _persist("api_contract", selected_artifacts):
+            api_prompt = (prompts.openapi_contract()
+                .replace("[FEATURE DESCRIPTION]", state.get("idea", ""))
+                .replace("[PASTE RELEVANT SCHEMA]", "(derive from PRD)")
+                .replace("[WHO CALLS THIS API — frontend, mobile, third parties]", "(derive from PRD)"))
+            prompts_to_run.append(("api_contract", api_prompt))
+        
+        if _persist("arch_risks", selected_artifacts):
+            risk_prompt = prompts.arch_risk_review().replace("[PASTE DESIGN DOCUMENT OR DIAGRAM]", architecture)
+            prompts_to_run.append(("arch_risks", risk_prompt))
+        
+        if prompts_to_run:
+            # Run in parallel
+            results = parallel_invoke(llm, prompts_to_run)
+            result_dict = dict(zip([name for name, _ in prompts_to_run], results))
+            
+            if "api_contract" in result_dict:
+                api_contract = result_dict["api_contract"]
+                api_contract = _enforce_sections(
+                    llm=llm,
+                    artifact_name="API Contract",
+                    markdown=api_contract,
+                    required_sections=["Endpoints", "Schemas", "Error Handling"],
+                )
+                write_artifact(run_dir, "06_openapi.md", api_contract)
+            
+            if "arch_risks" in result_dict:
+                arch_risks = result_dict["arch_risks"]
+                arch_risks = _enforce_sections(
+                    llm=llm,
+                    artifact_name="Architecture Risk Review",
+                    markdown=arch_risks,
+                    required_sections=["Risk Register", "Mitigations", "Open Questions"],
+                )
+                write_artifact(run_dir, "07_arch_risk_review.md", arch_risks)
 
     return {**state, "architecture": architecture, "api_contract": api_contract, "arch_risks": arch_risks, "adrs": "(see architecture output)"}
 
@@ -333,7 +351,8 @@ def qa_node(
             required_sections=["Coverage Gaps", "Recommendations", "Open Questions"],
         )
 
-    defects = _extract_defects(coverage_gaps) if coverage_gaps else []
+    # Extract defects using JSON-structured format
+    defects = extract_defects_json(coverage_gaps, llm) if coverage_gaps else []
 
     test_plan = "\n\n".join(filter(None, [
         ("# Unit Tests\n" + unit_tests) if unit_tests else "",
